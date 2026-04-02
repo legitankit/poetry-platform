@@ -37,12 +37,3 @@ app/
 
 lib/
 └── supabase.js
-
----
-
-## ⚙️ Setup Instructions
-
-### 1. Clone project
-```bash
-
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
