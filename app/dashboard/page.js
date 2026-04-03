@@ -11,88 +11,102 @@ export default function Dashboard() {
   const [filterCategory, setFilterCategory] = useState('All')
   const [user, setUser] = useState(null)
   const [currentPoem, setCurrentPoem] = useState(null)
-  const [mounted, setMounted] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setMounted(true)
+    loadPoems()
+    loadFavorites()
+    getUser()
   }, [])
-
-  useEffect(() => {
-    if (mounted) {
-      loadAllData()
-      getUser()
-    }
-  }, [mounted])
 
   async function getUser() {
     const { data: { session } } = await supabase.auth.getSession()
     setUser(session?.user || null)
   }
 
-  // Load all data from localStorage
-  function loadAllData() {
-    // Load poems
-    const savedPoems = localStorage.getItem('poems')
-    if (savedPoems) {
-      setPoems(JSON.parse(savedPoems))
+  // ========== LOAD POEMS FROM SUPABASE (CHANGED) ==========
+  async function loadPoems() {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('poems')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      console.error('Error loading poems:', error)
+    } else if (data && data.length > 0) {
+      setPoems(data)
     } else {
-      setPoems(samplePoems)
-      localStorage.setItem('poems', JSON.stringify(samplePoems))
+      // Insert sample poems if no data
+      await insertSamplePoems()
     }
+    setLoading(false)
+  }
 
-    // Load favorites
-    const savedFavorites = localStorage.getItem('favorites')
-    if (savedFavorites) {
-      setFavorites(JSON.parse(savedFavorites))
-    } else {
-      setFavorites([])
+  async function insertSamplePoems() {
+    const { error } = await supabase.from('poems').insert(samplePoems)
+    if (!error) {
+      loadPoems()
     }
   }
 
-  // Save poems to localStorage
-  function savePoems(updatedPoems) {
-    setPoems(updatedPoems)
-    localStorage.setItem('poems', JSON.stringify(updatedPoems))
+  function loadFavorites() {
+    const saved = localStorage.getItem('favorites')
+    if (saved) setFavorites(JSON.parse(saved))
   }
 
-  // Save favorites to localStorage
   function saveFavorites(updatedFavorites) {
     setFavorites(updatedFavorites)
     localStorage.setItem('favorites', JSON.stringify(updatedFavorites))
   }
 
-  // Toggle Like - Properly saves to localStorage
-  function toggleFavorite(poemId) {
+  // ========== TOGGLE LIKE - UPDATE SUPABASE (CHANGED) ==========
+  async function toggleFavorite(poemId) {
     let newFavorites = [...favorites]
-    let updatedPoems = [...poems]
+    let currentPoemData = poems.find(p => p.id === poemId)
+    let newLikesCount
     
     if (newFavorites.includes(poemId)) {
-      // Unlike - remove from favorites and decrease like count
       newFavorites = newFavorites.filter(id => id !== poemId)
-      updatedPoems = updatedPoems.map(poem =>
-        poem.id === poemId ? { ...poem, likes: Math.max(0, (poem.likes || 0) - 1) } : poem
-      )
+      newLikesCount = Math.max(0, (currentPoemData.likes || 0) - 1)
       toast.success('Removed like')
     } else {
-      // Like - add to favorites and increase like count
       newFavorites = [...newFavorites, poemId]
-      updatedPoems = updatedPoems.map(poem =>
-        poem.id === poemId ? { ...poem, likes: (poem.likes || 0) + 1 } : poem
-      )
+      newLikesCount = (currentPoemData.likes || 0) + 1
       toast.success('Liked! ❤️')
     }
     
-    savePoems(updatedPoems)
+    setFavorites(newFavorites)
     saveFavorites(newFavorites)
+    
+    // Update likes in Supabase
+    await supabase
+      .from('poems')
+      .update({ likes: newLikesCount })
+      .eq('id', poemId)
+    
+    // Update local state
+    setPoems(poems.map(p => 
+      p.id === poemId ? { ...p, likes: newLikesCount } : p
+    ))
   }
 
-  // Open poem modal and increase read count
-  function openPoemModal(poem) {
-    const updatedPoems = poems.map(p =>
-      p.id === poem.id ? { ...p, reads: (p.reads || 0) + 1 } : p
-    )
-    savePoems(updatedPoems)
-    setCurrentPoem(poem)
+  // ========== OPEN POEM MODAL - UPDATE READS IN SUPABASE (CHANGED) ==========
+  async function openPoemModal(poem) {
+    const newReadsCount = (poem.reads || 0) + 1
+    
+    // Update reads in Supabase
+    await supabase
+      .from('poems')
+      .update({ reads: newReadsCount })
+      .eq('id', poem.id)
+    
+    // Update local state
+    setPoems(poems.map(p => 
+      p.id === poem.id ? { ...p, reads: newReadsCount } : p
+    ))
+    setCurrentPoem({ ...poem, reads: newReadsCount })
+    
     const modal = document.getElementById('poem-modal')
     if (modal) modal.style.display = 'flex'
   }
@@ -119,7 +133,8 @@ export default function Dashboard() {
     if (contentInput) contentInput.value = ''
   }
 
-  function saveNewPoem() {
+  // ========== SAVE NEW POEM TO SUPABASE (CHANGED) ==========
+  async function saveNewPoem() {
     const title = document.getElementById('modal-poem-title-input')?.value || ''
     const author = document.getElementById('modal-poem-author-input')?.value || ''
     const category = document.getElementById('modal-poem-category')?.value || 'Romance'
@@ -130,25 +145,50 @@ export default function Dashboard() {
       return
     }
 
-    const newPoem = {
-      id: Date.now(),
-      title,
-      author,
-      content,
-      category: category.replace(/[^a-zA-Z]/g, ''),
-      likes: 0,
-      reads: 0,
-      date: new Date().toLocaleDateString()
-    }
+    const { data, error } = await supabase
+      .from('poems')
+      .insert([{
+        title,
+        author,
+        content,
+        category: category.replace(/[^a-zA-Z]/g, ''),
+        likes: 0,
+        reads: 0
+      }])
+      .select()
 
-    const updatedPoems = [newPoem, ...poems]
-    savePoems(updatedPoems)
-    closeCreateModal()
-    setCurrentView('poetry')
-    toast.success('Poem published! 🎉')
+    if (error) {
+      alert('Error saving poem!')
+      console.error(error)
+    } else if (data) {
+      setPoems([data[0], ...poems])
+      closeCreateModal()
+      setCurrentView('poetry')
+      toast.success('Poem published! 🎉')
+    }
   }
 
-  // Get Top 7 Most Liked Poems
+  // ========== DELETE POEM FROM SUPABASE (CHANGED) ==========
+  async function deletePoem(poemId, poemTitle) {
+    if (confirm(`Are you sure you want to delete "${poemTitle}"?`)) {
+      const { error } = await supabase
+        .from('poems')
+        .delete()
+        .eq('id', poemId)
+      
+      if (error) {
+        alert('Error deleting poem!')
+      } else {
+        setPoems(poems.filter(p => p.id !== poemId))
+        if (favorites.includes(poemId)) {
+          const newFavorites = favorites.filter(id => id !== poemId)
+          saveFavorites(newFavorites)
+        }
+        toast.success('Poem deleted! 🗑️')
+      }
+    }
+  }
+
   const topLikedPoems = [...poems]
     .sort((a, b) => (b.likes || 0) - (a.likes || 0))
     .slice(0, 7)
@@ -166,8 +206,15 @@ export default function Dashboard() {
     'Peace', 'Nostalgia', 'Adventure'
   ]
 
-  if (!mounted) {
-    return null
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-zinc-900">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-rose-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-zinc-400">Loading poetic realm...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -277,6 +324,7 @@ export default function Dashboard() {
                       isLiked={favorites.includes(poem.id)}
                       onLike={() => toggleFavorite(poem.id)}
                       onClick={() => openPoemModal(poem)}
+                      onDelete={() => deletePoem(poem.id, poem.title)}
                     />
                   ))}
                 </div>
@@ -297,6 +345,7 @@ export default function Dashboard() {
                   isLiked={favorites.includes(poem.id)}
                   onLike={() => toggleFavorite(poem.id)}
                   onClick={() => openPoemModal(poem)}
+                  onDelete={() => deletePoem(poem.id, poem.title)}
                 />
               ))}
             </div>
@@ -331,6 +380,7 @@ export default function Dashboard() {
                   isLiked={favorites.includes(poem.id)}
                   onLike={() => toggleFavorite(poem.id)}
                   onClick={() => openPoemModal(poem)}
+                  onDelete={() => deletePoem(poem.id, poem.title)}
                 />
               ))}
             </div>
@@ -351,6 +401,7 @@ export default function Dashboard() {
                   isLiked={true}
                   onLike={() => toggleFavorite(poem.id)}
                   onClick={() => openPoemModal(poem)}
+                  onDelete={() => deletePoem(poem.id, poem.title)}
                 />
               ))}
             </div>
@@ -456,7 +507,7 @@ export default function Dashboard() {
             <>
               <h2 style={{ fontFamily: 'var(--font-playfair), serif', fontWeight: 600, fontSize: '1.8rem' }}>{currentPoem.title}</h2>
               <p style={{ color: '#64748b', marginBottom: '1.5rem', fontSize: '0.85rem', fontFamily: 'var(--font-inter), sans-serif' }}>
-                By {currentPoem.author} • {currentPoem.category} • {currentPoem.date}
+                By {currentPoem.author} • {currentPoem.category} • {new Date(currentPoem.created_at).toLocaleDateString()}
               </p>
               <div style={{
                 fontFamily: 'var(--font-playfair), serif',
@@ -484,7 +535,7 @@ export default function Dashboard() {
                 >
                   {favorites.includes(currentPoem.id) ? '❤️' : '🤍'}
                 </button>
-                <button className="btn-cancel" onClick={closePoemModal} style={{ cursor: 'pointer' }}>Close</button>
+                <button className="btn-cancel" onClick={closePoemModal}>Close</button>
               </div>
             </>
           )}
@@ -559,8 +610,8 @@ export default function Dashboard() {
   )
 }
 
-// Regular Poem Card Component
-function PoemCard({ poem, isLiked, onLike, onClick }) {
+// Regular Poem Card Component - NO CHANGES
+function PoemCard({ poem, isLiked, onLike, onClick, onDelete }) {
   const excerpt = poem.content?.split('\n').slice(0, 3).join(' ') + (poem.content?.split('\n').length > 3 ? '...' : '')
 
   return (
@@ -586,6 +637,11 @@ function PoemCard({ poem, isLiked, onLike, onClick }) {
             </button>
             <span><i className="fas fa-eye"></i> {poem.reads || 0}</span>
             <span><i className="fas fa-tag"></i> {poem.category}</span>
+            <span style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
+                <i className="fas fa-trash"></i>
+              </button>
+            </span>
           </div>
           <span className="read-more">Read More →</span>
         </div>
@@ -594,8 +650,8 @@ function PoemCard({ poem, isLiked, onLike, onClick }) {
   )
 }
 
-// Most Liked Poem Card with Medal
-function MostLikedPoemCard({ poem, rank, isLiked, onLike, onClick }) {
+// Most Liked Poem Card with Medal - NO CHANGES
+function MostLikedPoemCard({ poem, rank, isLiked, onLike, onClick, onDelete }) {
   const excerpt = poem.content?.split('\n').slice(0, 3).join(' ') + (poem.content?.split('\n').length > 3 ? '...' : '')
   
   const getMedal = (rank) => {
@@ -638,6 +694,11 @@ function MostLikedPoemCard({ poem, rank, isLiked, onLike, onClick }) {
             </button>
             <span><i className="fas fa-eye"></i> {poem.reads || 0}</span>
             <span><i className="fas fa-tag"></i> {poem.category}</span>
+            <span style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
+                <i className="fas fa-trash"></i>
+              </button>
+            </span>
           </div>
           <span className="read-more">Read More →</span>
         </div>
@@ -646,26 +707,22 @@ function MostLikedPoemCard({ poem, rank, isLiked, onLike, onClick }) {
   )
 }
 
-// Sample Poems
+// Sample Poems - NO CHANGES
 const samplePoems = [
   {
-    id: 1,
     title: "Whispers of the Dawn",
     author: "Emily Rivers",
     content: "In the quiet hush of morning light,\nWhere shadows dance and take their flight,\nThe world awakens, soft and slow,\nA gentle breeze begins to blow.\n\nThe sun peeks through the amber trees,\nA symphony of buzzing bees,\nEach moment holds a promise new,\nOf skies so vast and endless blue.",
     category: "Nature",
     likes: 0,
-    reads: 0,
-    date: new Date().toLocaleDateString()
+    reads: 0
   },
   {
-    id: 2,
     title: "Echoes of a Broken Heart",
     author: "Samuel Gray",
     content: "The silence speaks what words cannot,\nThe hollow echo of a thought,\nEach tear that falls, a silent scream,\nThe shattering of a broken dream.\n\nI search for you in empty rooms,\nWhere love once bloomed, now sorrow looms,\nThe fragments of what used to be,\nAre all that's left inside of me.",
     category: "Sadness",
     likes: 0,
-    reads: 0,
-    date: new Date().toLocaleDateString()
+    reads: 0
   }
 ]
