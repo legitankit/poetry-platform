@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import toast from 'react-hot-toast'
 
-export default function Home() {
+export default function Dashboard() {
   const [poems, setPoems] = useState([])
   const [favorites, setFavorites] = useState([])
   const [currentView, setCurrentView] = useState('dashboard')
@@ -18,8 +19,7 @@ export default function Home() {
 
   useEffect(() => {
     if (mounted) {
-      fetchPoems()
-      loadFavorites()
+      loadAllData()
       getUser()
     }
   }, [mounted])
@@ -29,46 +29,69 @@ export default function Home() {
     setUser(session?.user || null)
   }
 
-  async function fetchPoems() {
-    const { data } = await supabase.from('poems').select('*').order('created_at', { ascending: false })
-    if (data && data.length > 0) {
-      setPoems(data)
+  // Load all data from localStorage
+  function loadAllData() {
+    // Load poems
+    const savedPoems = localStorage.getItem('poems')
+    if (savedPoems) {
+      setPoems(JSON.parse(savedPoems))
     } else {
       setPoems(samplePoems)
+      localStorage.setItem('poems', JSON.stringify(samplePoems))
+    }
+
+    // Load favorites
+    const savedFavorites = localStorage.getItem('favorites')
+    if (savedFavorites) {
+      setFavorites(JSON.parse(savedFavorites))
+    } else {
+      setFavorites([])
     }
   }
 
-  function loadFavorites() {
-    const saved = localStorage.getItem('favorites')
-    if (saved) setFavorites(JSON.parse(saved))
+  // Save poems to localStorage
+  function savePoems(updatedPoems) {
+    setPoems(updatedPoems)
+    localStorage.setItem('poems', JSON.stringify(updatedPoems))
   }
 
-  function toggleFavorite(poemId) {
-    let newFavorites
-    let updatedPoems = [...poems]
+  // Save favorites to localStorage
+  function saveFavorites(updatedFavorites) {
+    setFavorites(updatedFavorites)
+    localStorage.setItem('favorites', JSON.stringify(updatedFavorites))
+  }
 
-    if (favorites.includes(poemId)) {
-      newFavorites = favorites.filter(id => id !== poemId)
+  // Toggle Like - Properly saves to localStorage
+  function toggleFavorite(poemId) {
+    let newFavorites = [...favorites]
+    let updatedPoems = [...poems]
+    
+    if (newFavorites.includes(poemId)) {
+      // Unlike - remove from favorites and decrease like count
+      newFavorites = newFavorites.filter(id => id !== poemId)
       updatedPoems = updatedPoems.map(poem =>
         poem.id === poemId ? { ...poem, likes: Math.max(0, (poem.likes || 0) - 1) } : poem
       )
+      toast.success('Removed like')
     } else {
-      newFavorites = [...favorites, poemId]
+      // Like - add to favorites and increase like count
+      newFavorites = [...newFavorites, poemId]
       updatedPoems = updatedPoems.map(poem =>
         poem.id === poemId ? { ...poem, likes: (poem.likes || 0) + 1 } : poem
       )
+      toast.success('Liked! ❤️')
     }
-
-    setFavorites(newFavorites)
-    setPoems(updatedPoems)
-    localStorage.setItem('favorites', JSON.stringify(newFavorites))
+    
+    savePoems(updatedPoems)
+    saveFavorites(newFavorites)
   }
 
+  // Open poem modal and increase read count
   function openPoemModal(poem) {
     const updatedPoems = poems.map(p =>
       p.id === poem.id ? { ...p, reads: (p.reads || 0) + 1 } : p
     )
-    setPoems(updatedPoems)
+    savePoems(updatedPoems)
     setCurrentPoem(poem)
     const modal = document.getElementById('poem-modal')
     if (modal) modal.style.display = 'flex'
@@ -115,13 +138,14 @@ export default function Home() {
       category: category.replace(/[^a-zA-Z]/g, ''),
       likes: 0,
       reads: 0,
-      featured: false,
       date: new Date().toLocaleDateString()
     }
 
-    setPoems([newPoem, ...poems])
+    const updatedPoems = [newPoem, ...poems]
+    savePoems(updatedPoems)
     closeCreateModal()
     setCurrentView('poetry')
+    toast.success('Poem published! 🎉')
   }
 
   // Get Top 7 Most Liked Poems
@@ -238,7 +262,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Top 7 Most Liked Poems Section */}
+            {/* Top 7 Most Liked Poems */}
             {topLikedPoems.length > 0 && (
               <>
                 <div className="section-header">
